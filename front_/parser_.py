@@ -46,7 +46,7 @@ class Parser:
             block = self.stmts_()
             self.match('}')
         else:
-            block = self.stmts_()
+            block = self.single_stmt()
         return block
 
     def stmts_(self):
@@ -55,6 +55,9 @@ class Parser:
             next_stmt = self.stmts_()
             stmt = Seq(stmt, next_stmt)
         return stmt
+
+    def single_stmt(self):
+        return self.stmt_()
 
     def stmt_(self):
         t = self.cur_token()
@@ -65,7 +68,12 @@ class Parser:
             cond = self.bool_()
             self.match(')')
             then_stmts = self.block_()
-            return If(cond, then_stmts)
+            if self.is_word('else'):
+                self.match('else')
+                else_stmts = self.block_()
+            else:
+                else_stmts = None
+            return If(cond, then_stmts, else_stmts)
         elif self.is_word('int') or self.is_word('float'):
             return self.decl()
         else:
@@ -80,20 +88,20 @@ class Parser:
     def assign(self):
         variable = self.next_token()
         self.match('=')
-        value = self.next_token()
+        value = self.expr_()
         self.match(';')
         return Assign(variable, value)
 
     def bool_(self):
         expr = self.join()
-        if self.is_word('||'):
+        while self.is_word('||'):
             self.match('||')
             expr = Or(expr, self.bool_())
         return expr
 
     def join(self):
         expr = self.equal()
-        if self.is_word('&&'):
+        while self.is_word('&&'):
             self.match('&&')
             expr = And(expr, self.join())
         return expr
@@ -101,7 +109,7 @@ class Parser:
     def equal(self):
         expr = self.rel()
 
-        if self.is_word('==') or self.is_word('!='):
+        while self.is_word('==') or self.is_word('!='):
             operator = self.next_token().name
             expr = Equal(expr, self.equal(), operator)
         return expr
@@ -109,7 +117,7 @@ class Parser:
     def rel(self):
         expr = self.expr_()
 
-        if self.is_word('<') or self.is_word('<=') or self.is_word('>') or self.is_word('>='):
+        while self.is_word('<') or self.is_word('<=') or self.is_word('>') or self.is_word('>='):
             operator = self.next_token().name
             expr = Rel(expr, self.expr_(), operator)
         return expr
@@ -117,7 +125,7 @@ class Parser:
     def expr_(self):
         expr = self.term()
 
-        if self.is_word('+') or self.is_word('-'):
+        while self.is_word('+') or self.is_word('-'):
             operator = self.next_token().name
             expr = Arith(expr, self.term(), operator)
         return expr
@@ -125,7 +133,7 @@ class Parser:
     def term(self):
         expr = self.unary()
 
-        if self.is_word('*') or self.is_word('/'):
+        while self.is_word('*') or self.is_word('/'):
             operator = self.next_token().name
             expr = Arith(expr, self.unary(), operator)
         return expr
