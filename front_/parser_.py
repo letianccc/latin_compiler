@@ -1,4 +1,4 @@
-from front_.lexer_ import lexer
+from front_.lexer_ import Lexer
 from front_.AST import *
 
 
@@ -6,11 +6,24 @@ class Parser:
     def __init__(self, tokens):
         self.tokens = tokens
         self.index = 0
+        self.symbols = list()
+        self.printf_formats = list()
+        self.symbol_count = 0
+        self.ident_count = 0
+        self.has_array = False
+        self.has_printf = False
         self.AST = self.block_()
 
     def is_word(self, word):
         t = self.cur_token()
         if t.name == word:
+            return True
+        else:
+            return False
+
+    def is_type(self, type_):
+        t = self.cur_token()
+        if t.type_ == type_:
             return True
         else:
             return False
@@ -37,7 +50,8 @@ class Parser:
             name = self.cur_token().name
             if name != word:
                 print('not match!')
-                print('last:  ', self.tokens[self.index-2].name, self.tokens[self.index-1].name)
+                print('last:  ', self.tokens[self.index-4].name, self.tokens[self.index-3   ].name,
+                      self.tokens[self.index-2].name, self.tokens[self.index-1].name)
                 print('index: ', self.index, 'len:  ', len(self.tokens))
                 print('match:  ', name)
                 print('expect: ', word)
@@ -52,7 +66,10 @@ class Parser:
     def block_(self):
         if self.is_word('{'):
             self.match('{')
-            block = self.stmts_()
+            if self.is_type('number'):
+                block = self.parse_array_data()
+            else:
+                block = self.stmts_()
             self.match('}')
         else:
             block = self.single_stmt()
@@ -77,10 +94,52 @@ class Parser:
             return self.decl()
         elif self.is_word('while'):
             return self.while_stmt()
+        elif self.is_word('printf'):
+            return self.printf_stmt()
         elif self.is_word('{'):
             return self.block_()
         else:
             return self.assign()
+
+    def parse_array_data(self):
+        array = list()
+        while True:
+            t = self.next_token()
+            num = t.name
+            array.append(num)
+            if self.is_word(','):
+                self.match(',')
+            else:
+                # }
+                break
+        return Array_(array)
+
+    def printf_stmt(self):
+        self.has_printf = True
+        self.match('printf')
+        self.match('(')
+        self.match('\"')
+        format_ = self.parse_format()
+        self.match('\"')
+        if self.is_word(','):
+            self.match(',')
+            val = self.factor()
+        self.match(')')
+        self.match(';')
+        return Printf(format_, val)
+
+    def parse_format(self):
+        format_ = self.format_word()
+        if format_ not in self.printf_formats:
+            self.printf_formats.append(format_)
+        return format_
+
+    def format_word(self):
+        format_ = ''
+        while not self.is_word('\"'):
+            c = self.next_token().name
+            format_ += c
+        return format_
 
     def while_stmt(self):
         self.match('while')
@@ -105,12 +164,55 @@ class Parser:
 
     def decl(self):
         type_ = self.next_token().name
-        variable = self.next_token()
+        if self.is_array():
+            self.has_array = True
+            decl_ = self.decl_array(type_)
+        else:
+            decl_ = self.decl_single_variable(type_)
         self.match(';')
-        return Decl(type_, variable)
+        return decl_
+
+    def is_array(self):
+        t = self.tokens[self.index + 1]
+        if t.name == '[':
+            return True
+        else:
+            return False
+
+    def decl_array(self, type_):
+        var = self.next_token()
+        expr = self.parse_array_postfix() # expr是number类型
+        array = Array(var, expr)
+        array_size = int(expr.name)
+        self.add_symbol(array, array_size)
+        return Decl(type_, array)
+
+    def parse_array_postfix(self):
+        self.match('[')
+        expr = self.expr_()
+        self.match(']')
+        return expr
+
+    def is_num(self, array_node):
+        n = array_node
+        if n.__class__.__name__ == 'Token':
+            if n.type_ == 'number':
+                return True
+        return False
+
+    def decl_single_variable(self, type_):
+        var = self.next_token()
+        amount = 1
+        self.add_symbol(var, amount)
+        return Decl(type_, var)
+
+    def add_symbol(self, symbol, amount):
+        self.symbols.append(symbol)
+        self.ident_count += amount
+        self.symbol_count += amount
 
     def assign(self):
-        variable = self.next_token()
+        variable = self.factor()
         self.match('=')
         value = self.bool_()
         self.match(';')
@@ -149,6 +251,7 @@ class Parser:
         expr = self.term()
 
         while self.is_word('+') or self.is_word('-'):
+            self.symbol_count += 1
             operator = self.next_token().name
             expr = Arith(expr, self.term(), operator)
         return expr
@@ -157,6 +260,7 @@ class Parser:
         expr = self.unary()
 
         while self.is_word('*') or self.is_word('/'):
+            self.symbol_count += 1
             operator = self.next_token().name
             expr = Arith(expr, self.unary(), operator)
         return expr
@@ -175,7 +279,18 @@ class Parser:
             expr = self.bool_()
             self.match(')')
             return expr
+        elif self.is_word('{'):
+            return self.block_()
+        elif self.is_array():
+            name = self.next_token()
+            index = self.parse_array_element()
+            return Array(name, index)
         else:
             # 标识符
-            t = self.next_token()
-            return t
+            return self.next_token()
+
+    def parse_array_element(self):
+        array_index = self.parse_array_postfix()
+        if not self.is_num(array_index):
+            self.symbol_count += 1
+        return array_index
