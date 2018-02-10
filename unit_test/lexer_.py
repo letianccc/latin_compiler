@@ -1,5 +1,5 @@
 from front_.lexer_ import Lexer
-from util import *
+from front_.util import *
 
 
 def test_lexer():

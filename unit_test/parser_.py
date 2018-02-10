@@ -1,6 +1,6 @@
 from front_.lexer_ import Lexer
 from front_.parser_ import Parser
-from util import *
+from front_.util import *
 
 
 

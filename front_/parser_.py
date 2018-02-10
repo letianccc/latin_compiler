@@ -11,7 +11,6 @@ class Parser:
         self.symbol_count = 0
         self.ident_count = 0
         self.has_array = False
-        self.has_printf = False
         self.AST = self.block_()
 
     def is_word(self, word):
@@ -115,7 +114,6 @@ class Parser:
         return Array_(array)
 
     def printf_stmt(self):
-        self.has_printf = True
         self.match('printf')
         self.match('(')
         self.match('\"')

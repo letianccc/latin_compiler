@@ -1,7 +1,7 @@
 from front_.lexer_ import Lexer
 from front_.parser_ import Parser
 from front_.generator import Generator, Generator_as
-from util import *
+from front_.util import *
 
 i = 0
 all_ = True

@@ -18,7 +18,6 @@ class Generator_as:
     def __init__(self, parser):
         self.ast = parser.AST
         self.has_array = parser.has_array
-        self.has_printf = parser.has_printf
         self.symbol_map = dict()
         self.LC_map = dict()
         self.symbols = parser.symbols
@@ -42,7 +41,7 @@ class Generator_as:
         map_ = dict()
         index = self.ident_start_index()
         for s in self.symbols:
-            if self.is_node_type(s, 'Array'):
+            if is_node_type(s, 'Array'):
                 array_name = s.variable.name
                 array_amount = int(s.index.name)
                 map_[array_name] = index
@@ -86,15 +85,15 @@ class Generator_as:
     def gen_test_ir(self):
         if self.has_printf:
             self.init_printf()
+        self.gen_reserve_memory()
         if self.has_array:
-            self.gen_reserve_memory()
             self.gen_array_start()
         self.gen(self.ast)
         if self.has_array:
             self.array_end()
 
     def gen_executable_ir(self):
-        if self.has_printf:
+        if len(self.printf_formats) > 0:
             self.init_printf()
         self.init_ir()
         self.gen_reserve_memory()
@@ -150,25 +149,25 @@ class Generator_as:
         self.gen_ir(ir)
 
     def gen(self, node):
-        if self.is_node_type(node, 'Seq'):
+        if is_node_type(node, 'Seq'):
             self.gen(node.stmt)
             self.gen(node.next_stmt)
-        elif self.is_node_type(node, 'Decl'):
+        elif is_node_type(node, 'Decl'):
             self.gen_decl(node)
-        elif self.is_node_type(node, 'Assign'):
+        elif is_node_type(node, 'Assign'):
             self.gen_assign(node)
-        elif self.is_node_type(node, 'If'):
+        elif is_node_type(node, 'If'):
             self.gen_if(node)
-        elif self.is_node_type(node, 'While'):
+        elif is_node_type(node, 'While'):
             self.gen_while(node)
-        elif self.is_node_type(node, 'Printf'):
+        elif is_node_type(node, 'Printf'):
             self.gen_printf(node)
         elif node is None:
             return None
 
     def gen_while(self, node):
         cond = self.new_block()
-        if self.is_node_type(node.cond, 'Or'):
+        if is_node_type(node.cond, 'Or'):
             while_block = self.new_block()
         else:
             while_block = None
@@ -221,7 +220,7 @@ class Generator_as:
     #     return '[' in token.name
 
     def gen_assign(self, node):
-        if not self.is_node_type(node.value, 'Array_'):
+        if not is_node_type(node.value, 'Array_'):
             self.assign_variable(node)
         else:
             # 右边是列表实例，进行数组的初始化
@@ -232,9 +231,10 @@ class Generator_as:
         val = assign_node.value
         val = self.gen_expr(val)
         # 加减乘除返回%eax
-        ir = 'movl ' + val + ', ' + '%eax' + '\n'
-        var_addr = self.address(var, True)
-        ir += 'movl ' + '%eax' + ', ' + var_addr + '\n'
+        ir = 'movl ' + val + ', ' + '%edx' + '\n'
+        self.gen_ir(ir)
+        var_addr = self.address(var)
+        ir = 'movl ' + '%edx' + ', ' + var_addr + '\n'
         self.gen_ir(ir)
 
     def init_array(self, assign_node):
@@ -259,23 +259,23 @@ class Generator_as:
         return self.address_by_index(index)
 
     def gen_expr(self, node):
-        if self.is_node_type(node, 'Token'):
+        if is_node_type(node, 'Token'):
             if node.type_ == 'number':
                 return '$' + node.name
             elif node.type_ == 'identifier':
                 return self.address(node)
-        elif self.is_node_type(node, 'Array'):
+        elif is_node_type(node, 'Array'):
             return self.address(node)
-        elif self.is_node_type(node, 'Arith'):
+        elif is_node_type(node, 'Arith'):
             return self.gen_arith(node)
-        elif self.is_node_type(node, 'Unary'):
+        elif is_node_type(node, 'Unary'):
             return node.operator + self.gen_expr(node.operand)
 
     def gen_arith(self, node):
         left = self.gen_expr(node.left)
         right = self.gen_expr(node.right)
         ir1 = 'movl ' + left + ', ' + '%eax\n'
-        ir2 = 'movl ' + right + ', ' + '%edx\n'
+        # ir2 = 'movl ' + right + ', ' + '%edx\n'
 
         op = node.operator
         if op == '+':
@@ -292,12 +292,12 @@ class Generator_as:
         #     ir2 = 'cltd\n'
         #     ir3 = 'idivl ' + right + '\n'
         # else:
-        ir3 = op_as + ' ' + '%edx, %eax\n'
+        ir3 = op_as + ' ' + right + ', %eax\n'
 
 
         addr = self.next_tmp_addr()
         ir4 = 'movl %eax, ' + addr + '\n'
-        ir = ir1 + ir2 + ir3 + ir4
+        ir = ir1  + ir3 + ir4
         self.gen_ir(ir)
         return addr
 
@@ -310,9 +310,9 @@ class Generator_as:
     def address_by_index(self, index):
         return '-' + str(index * 4) + '(%rbp)'
 
-    def address(self, identifier, not_tmp=False):
+    def address(self, identifier):
         ident = identifier
-        if self.is_node_type(ident, 'Array'):
+        if is_node_type(ident, 'Array'):
             name = ident.variable.name
             index = ident.index
             if self.is_num(index):
@@ -326,15 +326,7 @@ class Generator_as:
                 self.gen_ir(ir)
                 array = self.symbol_map[name]
                 addr = '-' + str(array*4) + '(%rbp, %rcx, 4)'
-                if not_tmp:
-                    return addr
-                else:
-                    ir += 'movl ' + addr + ', %eax\n'
-                    tmp_addr = self.next_tmp_addr()
-                    ir += 'movl %eax, ' + tmp_addr + '\n'
-                    self.gen_ir(ir)
-                    return tmp_addr
-                # return addr
+                return addr
             array_sym_id = self.symbol_map[name]
             ident_id = array_sym_id - index
             addr = self.address_by_index(ident_id)
@@ -345,18 +337,14 @@ class Generator_as:
         return addr
 
     def is_num(self, node):
-        if self.is_node_type(node, 'Token'):
+        if is_node_type(node, 'Token'):
             if node.type_ == 'number':
                 return True
         return False
 
-
-
-
-
     # jump_style 决定 if false jump 或者 if true jump
     def gen_if(self, node):
-        if self.is_node_type(node.cond, 'Or'):
+        if is_node_type(node.cond, 'Or'):
             then_block = self.new_block()
         else:
             then_block = None
@@ -390,9 +378,9 @@ class Generator_as:
         self.gen(node.else_)
 
     def gen_logic(self, node, true_block, false_block, jump_style):
-        if self.is_node_type(node, 'Or'):
+        if is_node_type(node, 'Or'):
             self.gen_or(node, true_block, false_block, jump_style)
-        elif self.is_node_type(node, 'And'):
+        elif is_node_type(node, 'And'):
             self.gen_and(node, true_block, false_block, jump_style)
         else:
             target = true_block if jump_style else false_block
@@ -412,8 +400,8 @@ class Generator_as:
         right_jump_style = jump_style
         left = node.left
         right_of_left = left.right
-        need_new_block = self.is_node_type(left, 'And') \
-                        or self.is_node_type(right_of_left, 'And')
+        need_new_block = is_node_type(left, 'And') \
+                        or is_node_type(right_of_left, 'And')
         if need_new_block:
             right_block = self.new_block()
             self.gen_logic(node.left, true_block, right_block, left_jump_style)
@@ -428,8 +416,8 @@ class Generator_as:
         right_jump_style = jump_style
         left = node.left
         left_right = left.right
-        need_new_block = self.is_node_type(left, 'Or') \
-                        or self.is_node_type(left_right, 'Or')
+        need_new_block = is_node_type(left, 'Or') \
+                        or is_node_type(left_right, 'Or')
         if need_new_block:
             right_block = self.new_block()
             self.gen_logic(node.left, right_block, false_block, left_jump_style)
@@ -445,9 +433,11 @@ class Generator_as:
 
     def gen_cmp_stmt(self, node):
         left = self.gen_expr(node.left)
+        ir = 'movl ' + left + ', ' + '%edx' + '\n'
+        self.gen_ir(ir)
+
         right = self.gen_expr(node.right)
-        ir = 'movl ' + left + ', ' + '%eax' + '\n'
-        ir += 'cmpl ' + right + ', ' + '%eax\n'
+        ir = 'cmpl ' + right + ', ' + '%edx\n'
         self.gen_ir(ir)
 
     def gen_jump(self, cmp_operator, target_block, jump_style):
@@ -494,16 +484,16 @@ class Generator:
         self.line_count += 1
 
     def gen(self, node):
-        if self.is_node_type(node, 'Seq'):
+        if is_node_type(node, 'Seq'):
             self.gen(node.stmt)
             self.gen(node.next_stmt)
-        elif self.is_node_type(node, 'Decl'):
+        elif is_node_type(node, 'Decl'):
             self.gen_decl(node)
-        elif self.is_node_type(node, 'Assign'):
+        elif is_node_type(node, 'Assign'):
             self.gen_assign(node)
-        elif self.is_node_type(node, 'If'):
+        elif is_node_type(node, 'If'):
             self.gen_if(node)
-        elif self.is_node_type(node, 'While'):
+        elif is_node_type(node, 'While'):
             self.gen_while(node)
         elif node is None:
             return None
@@ -562,17 +552,17 @@ class Generator:
         self.line_count += 1
 
     def gen_expr(self, node):
-        if self.is_node_type(node, 'Token'):
+        if is_node_type(node, 'Token'):
             if node.type_ == 'number':
                 return node.name
             elif node.type_ == 'identifier':
                 t = self.symbol_map[node.name]
                 return t
-        elif self.is_node_type(node, 'Arith') or \
-                self.is_node_type(node, 'And') or \
-                self.is_node_type(node, 'Or') or \
-                self.is_node_type(node, 'Rel') or \
-                self.is_node_type(node, 'Equal'):
+        elif is_node_type(node, 'Arith') or \
+                is_node_type(node, 'And') or \
+                is_node_type(node, 'Or') or \
+                is_node_type(node, 'Rel') or \
+                is_node_type(node, 'Equal'):
             left = self.gen_expr(node.left)
             right = self.gen_expr(node.right)
             t = 't' + str(self.symbol_count)
@@ -582,7 +572,7 @@ class Generator:
             self.symbol_count += 1
             self.line_count += 1
             return t
-        elif self.is_node_type(node, 'Unary'):
+        elif is_node_type(node, 'Unary'):
             return node.operator + self.gen_expr(node.operand)
 
 
